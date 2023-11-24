@@ -1,0 +1,87 @@
+drop table if exists sandbox_analytics.top_free_classes_attr_total;
+create table sandbox_analytics.top_free_classes_attr_total as 
+
+with cte_class
+as
+(
+select pp.uid as class_uid, 
+ tt3."name" as goal_name,
+ pp.title as class_title,
+ au.first_name || ' ' || au.last_name as educator_name,
+ listagg(distinct (case when tt."level" = 15 then tt."name" end),', ') within group (order by tt."name") as topic,
+ listagg(distinct (case when tt."level" = 30 then tt."name" end),', ') within group (order by tt."name") as topic_group 
+from posts_post pp 
+left join uplus_liveclass ul on pp.live_class_id = ul.id
+left join uplus_programme up on ul.programme_id = up.id 
+left join uplus_topicprogrammerelation tr on up.id = tr.programme_id 
+left join topology_topology tt on tr.topic_id = tt.id
+left join topology_topology tt3 on up.topology_id = tt3.id 
+left join auth_user au on pp.user_id = au.id 
+where -- ul.started_at >= '2022-01-01'
+     up.is_special = 1 
+    and pp.is_active = 1      
+group by 1,2,3,4
+)
+
+,cte_watchtime
+as
+(
+select pva.video_id, count(distinct player_id) as number_of_views, sum(pva.total_watch_time)/60 as watchmins
+from production_video_analytics pva 
+where -- pva.updated_at >= '2022-01-01'
+      pva.total_watch_time >= 300 
+group by 1
+), 
+
+cte_feedback as (
+select object_id as class_uid, count(ff2.f_description) as total_feedbacks, 
+       concat(round((count(case when ff2.f_description = 'Yes' then 1 else null end)*1.00/count(ff2.f_description)*1.00)*100.00,2),'%') as positive, 
+       concat(round((count(case when ff2.f_description = 'No' then 1 else null end)*1.00/count(ff2.f_description)*1.00)*100.00,2),'%') as negative
+from feedback_feedbacklog ff 
+left join 
+(select *, 
+case when description in ('I somewhat understood','I understood everything','It was great','Loved it!') then 'Yes'
+     when description in ('I didn\'t understand at all','Not so great','Why are you leaving early','Not good') then 'No'
+     else description end as f_description
+from feedback_feedbackchoice) ff2 on ff.choice_id = ff2.id 
+left join feedback_feedback ff3 on ff.feedback_id = ff3.id 
+where -- ff.created_at >= '2022-01-01' 
+ff3.description like '%class%' 
+and ff.feedback_id in (18,19,20,21,64,73,74) 
+group by 1 
+)
+
+select * from (
+select a.class_uid, 
+       a.class_title, 
+       a.goal_name, 
+       a.educator_name, 
+       a.topic, 
+       a.topic_group, 
+       b.number_of_views,
+       b.watchmins, 
+       c.total_feedbacks, 
+       c.positive,
+       c.negative,
+       row_number() over(partition by a.goal_name, a.topic_group order by number_of_views desc) rk 
+from cte_class a 
+left join cte_watchtime b on a.class_uid = b.video_id
+left join cte_feedback c on a.class_uid = c.class_uid 
+where number_of_views > 0) 
+where rk <= 10 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
